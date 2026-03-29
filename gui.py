@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import shutil
+import sys
+import tempfile
+import zipfile
+from pathlib import Path
 from typing import Callable
 
+import requests
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
@@ -15,6 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -588,6 +595,7 @@ class SettingsDialog(QDialog):
     def __init__(
         self,
         current_data_path: str,
+        app_version: str,
         on_save_path: Callable[[str], bool],
         parent: QWidget | None = None,
     ) -> None:
@@ -604,6 +612,7 @@ class SettingsDialog(QDialog):
         save_btn.clicked.connect(self._save)
 
         form = QFormLayout()
+        form.addRow("Версия приложения:", QLabel(app_version))
         form.addRow("Путь к data.json:", self.path_edit)
 
         controls = QHBoxLayout()
@@ -645,6 +654,8 @@ class MainWindow(QMainWindow):
         on_change_data_path: Callable[[str], bool],
     ) -> None:
         super().__init__()
+        self.github_username = "USERNAME"
+        self.github_repo = "REPO"
         self.manager = manager
         self.data_file_path = data_file_path
         self.on_change_data_path = on_change_data_path
@@ -673,6 +684,7 @@ class MainWindow(QMainWindow):
         btn_persons = QPushButton("Получатели")
         btn_keys_on_hand = QPushButton("Ключи на руках")
         btn_export_excel = QPushButton("Экспорт в Excel")
+        btn_check_updates = QPushButton("Проверить обновления")
         btn_settings = QPushButton("Настройки")
 
         btn_add.clicked.connect(self._on_add)
@@ -684,6 +696,7 @@ class MainWindow(QMainWindow):
         btn_persons.clicked.connect(self._on_persons)
         btn_keys_on_hand.clicked.connect(self._on_keys_on_hand)
         btn_export_excel.clicked.connect(self._on_export_excel)
+        btn_check_updates.clicked.connect(self._on_check_updates)
         btn_settings.clicked.connect(self._on_settings)
         self.search_edit.textChanged.connect(self.refresh_table)
         self.table.itemSelectionChanged.connect(self._update_edit_button_state)
@@ -700,6 +713,7 @@ class MainWindow(QMainWindow):
             btn_persons,
             btn_keys_on_hand,
             btn_export_excel,
+            btn_check_updates,
             btn_settings,
         ):
             btns.addWidget(btn)
@@ -884,9 +898,178 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить файл Excel.\n\n{e}")
 
     def _on_settings(self) -> None:
-        dialog = SettingsDialog(self.data_file_path, self._apply_data_path, self)
+        dialog = SettingsDialog(self.data_file_path, self._get_local_version(), self._apply_data_path, self)
         if dialog.exec():
             self.refresh_table()
+
+    def _on_check_updates(self) -> None:
+        local_version = self._get_local_version()
+        try:
+            remote_version = self._get_remote_version()
+        except requests.RequestException as e:
+            QMessageBox.critical(self, "Ошибка обновления", f"Не удалось проверить обновления.\n\nПроверьте интернет.\n{e}")
+            return
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка обновления", f"Ошибка при проверке версии на GitHub.\n\n{e}")
+            return
+
+        if not self._is_newer_version(remote_version, local_version):
+            QMessageBox.information(self, "Обновление", "У вас последняя версия.")
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Доступно обновление",
+            (
+                f"Доступна новая версия {remote_version}\n"
+                f"Текущая версия: {local_version}\n\n"
+                "Обновить сейчас?"
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        try:
+            self._download_and_apply_update()
+        except requests.RequestException as e:
+            QMessageBox.critical(self, "Ошибка обновления", f"Ошибка скачивания обновления.\n\n{e}")
+            return
+        except zipfile.BadZipFile as e:
+            QMessageBox.critical(self, "Ошибка обновления", f"Ошибка распаковки архива.\n\n{e}")
+            return
+        except OSError as e:
+            QMessageBox.critical(self, "Ошибка обновления", f"Ошибка записи файлов.\n\n{e}")
+            return
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка обновления", f"Не удалось установить обновление.\n\n{e}")
+            return
+
+        restart = QMessageBox.question(
+            self,
+            "Обновление установлено",
+            "Обновление установлено. Перезапустить приложение?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if restart == QMessageBox.Yes:
+            self._restart_application()
+
+    def _get_app_dir(self) -> Path:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent
+
+    def _get_local_version(self) -> str:
+        version_file = self._get_app_dir() / "version.txt"
+        try:
+            version = version_file.read_text(encoding="utf-8").strip()
+            return version or "0.0.0"
+        except OSError:
+            return "0.0.0"
+
+    def _get_remote_version(self) -> str:
+        version_url = (
+            f"https://raw.githubusercontent.com/{self.github_username}/{self.github_repo}/main/version.txt"
+        )
+        response = requests.get(version_url, timeout=15)
+        response.raise_for_status()
+        remote_version = response.text.strip()
+        if not remote_version:
+            raise ValueError("Пустой version.txt в репозитории.")
+        return remote_version
+
+    @staticmethod
+    def _parse_version(version: str) -> tuple[int, ...]:
+        parts = []
+        for part in version.strip().split("."):
+            digits = "".join(ch for ch in part if ch.isdigit())
+            parts.append(int(digits or "0"))
+        return tuple(parts)
+
+    def _is_newer_version(self, remote: str, local: str) -> bool:
+        remote_parts = self._parse_version(remote)
+        local_parts = self._parse_version(local)
+        max_len = max(len(remote_parts), len(local_parts))
+        padded_remote = remote_parts + (0,) * (max_len - len(remote_parts))
+        padded_local = local_parts + (0,) * (max_len - len(local_parts))
+        return padded_remote > padded_local
+
+    def _download_and_apply_update(self) -> None:
+        zip_url = f"https://github.com/{self.github_username}/{self.github_repo}/archive/refs/heads/main.zip"
+
+        with tempfile.TemporaryDirectory(prefix="key-manager-update-") as temp_dir:
+            temp_path = Path(temp_dir)
+            zip_path = temp_path / "update.zip"
+
+            progress = QProgressDialog("Загрузка обновления...", "Отмена", 0, 100, self)
+            progress.setWindowTitle("Обновление")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setValue(0)
+            progress.show()
+
+            with requests.get(zip_url, stream=True, timeout=30) as response:
+                response.raise_for_status()
+                total_size = int(response.headers.get("content-length", 0))
+                downloaded = 0
+                with zip_path.open("wb") as f:
+                    for chunk in response.iter_content(chunk_size=65536):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            progress.setValue(min(100, int((downloaded / total_size) * 100)))
+                        else:
+                            progress.setValue(0)
+                        if progress.wasCanceled():
+                            raise RuntimeError("Загрузка обновления отменена пользователем.")
+
+            progress.setLabelText("Распаковка и установка обновления...")
+            progress.setValue(100)
+
+            extract_dir = temp_path / "unpacked"
+            with zipfile.ZipFile(zip_path, "r") as archive:
+                archive.extractall(extract_dir)
+
+            source_root = self._resolve_update_source(extract_dir)
+            destination_root = self._get_app_dir()
+            self._sync_update_files(source_root, destination_root)
+
+    def _resolve_update_source(self, extract_dir: Path) -> Path:
+        unpacked_roots = [p for p in extract_dir.iterdir() if p.is_dir()]
+        if not unpacked_roots:
+            raise FileNotFoundError("Не удалось найти распакованную директорию обновления.")
+
+        repo_root = unpacked_roots[0]
+        dist_root = repo_root / "dist" / "key-manager"
+        if dist_root.exists() and dist_root.is_dir():
+            return dist_root
+        return repo_root
+
+    def _sync_update_files(self, source_root: Path, destination_root: Path) -> None:
+        excluded_names = {"data.json", "config.json", ".git"}
+
+        for src in source_root.rglob("*"):
+            relative = src.relative_to(source_root)
+            if any(part in excluded_names for part in relative.parts):
+                continue
+
+            dst = destination_root / relative
+            if src.is_dir():
+                dst.mkdir(parents=True, exist_ok=True)
+                continue
+
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+    def _restart_application(self) -> None:
+        from PySide6.QtCore import QProcess
+        from PySide6.QtWidgets import QApplication
+
+        QProcess.startDetached(sys.executable, sys.argv)
+        QApplication.quit()
 
     def _apply_data_path(self, path: str) -> bool:
         changed = self.on_change_data_path(path)
