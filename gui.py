@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
     QDialog,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -584,6 +585,7 @@ class MainWindow(QMainWindow):
         btn_history = QPushButton("История")
         btn_persons = QPushButton("Получатели")
         btn_keys_on_hand = QPushButton("Ключи на руках")
+        btn_export_excel = QPushButton("Экспорт в Excel")
 
         btn_add.clicked.connect(self._on_add)
         btn_issue.clicked.connect(self._on_issue)
@@ -592,10 +594,11 @@ class MainWindow(QMainWindow):
         btn_history.clicked.connect(self._on_history)
         btn_persons.clicked.connect(self._on_persons)
         btn_keys_on_hand.clicked.connect(self._on_keys_on_hand)
+        btn_export_excel.clicked.connect(self._on_export_excel)
         self.search_edit.textChanged.connect(self.refresh_table)
 
         btns = QHBoxLayout()
-        for btn in (btn_add, btn_issue, btn_return, btn_lost, btn_history, btn_persons, btn_keys_on_hand):
+        for btn in (btn_add, btn_issue, btn_return, btn_lost, btn_history, btn_persons, btn_keys_on_hand, btn_export_excel):
             btns.addWidget(btn)
 
         layout = QVBoxLayout(root)
@@ -667,3 +670,83 @@ class MainWindow(QMainWindow):
     def _on_keys_on_hand(self) -> None:
         dialog = KeysOnHandDialog(self.manager, self)
         dialog.exec()
+
+    def _on_export_excel(self) -> None:
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить Excel-файл",
+            "key_manager_export.xlsx",
+            "Excel Files (*.xlsx)",
+        )
+        if not file_path:
+            return
+
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+
+        try:
+            from openpyxl import Workbook
+        except ImportError:
+            QMessageBox.critical(
+                self,
+                "Ошибка экспорта",
+                "Библиотека openpyxl не установлена. Установите зависимости из requirements.txt.",
+            )
+            return
+
+        try:
+            workbook = Workbook()
+
+            apartments_sheet = workbook.active
+            apartments_sheet.title = "Квартиры"
+            apartments_sheet.append(["Корпус", "Этаж", "Квартира", "Всего ключей", "Выдано", "Утеряно", "Доступно"])
+            for apartment in self.manager.get_apartments():
+                apartments_sheet.append(
+                    [
+                        apartment.building,
+                        apartment.floor,
+                        apartment.apartment_number,
+                        apartment.total_keys,
+                        apartment.issued_keys,
+                        apartment.lost_keys,
+                        apartment.available_keys,
+                    ]
+                )
+
+            history_sheet = workbook.create_sheet("История")
+            history_sheet.append(["Дата/время", "Действие", "Корпус", "Этаж", "Квартира", "Получатель", "Количество", "Статус"])
+            for item in self.manager.get_history():
+                history_sheet.append(
+                    [
+                        item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                        item.operation_type,
+                        item.building,
+                        item.floor,
+                        item.apartment_number,
+                        item.recipient,
+                        item.quantity,
+                        item.status,
+                    ]
+                )
+
+            active_sheet = workbook.create_sheet("Ключи на руках")
+            active_sheet.append(["Корпус", "Этаж", "Квартира", "Получатель", "Количество", "Дата выдачи"])
+            for issue in self.manager.get_active_issues():
+                apartment = self.manager.get_apartment(issue.apartment_id)
+                if apartment:
+                    row = [
+                        apartment.building,
+                        apartment.floor,
+                        apartment.apartment_number,
+                        issue.recipient_name,
+                        issue.active_count,
+                        issue.issued_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    ]
+                else:
+                    row = ["-", "-", "-", issue.recipient_name, issue.active_count, issue.issued_at.strftime("%Y-%m-%d %H:%M:%S")]
+                active_sheet.append(row)
+
+            workbook.save(file_path)
+            QMessageBox.information(self, "Экспорт завершен", f"Данные успешно сохранены в файл:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить файл Excel.\n\n{e}")
