@@ -33,6 +33,24 @@ from PySide6.QtWidgets import (
 from key_manager import KeyManager, KeyManagerError, Person
 
 
+UPDATE_CONFIG = {
+    "github_username": "davitkiria-commits",
+    "github_repo": "key-manager-app",
+    "github_branch": "main",
+}
+
+
+def get_update_urls() -> dict[str, str]:
+    username = UPDATE_CONFIG["github_username"]
+    repo = UPDATE_CONFIG["github_repo"]
+    branch = UPDATE_CONFIG["github_branch"]
+    base_raw_url = f"https://raw.githubusercontent.com/{username}/{repo}/{branch}"
+    return {
+        "version_txt_url": f"{base_raw_url}/version.txt",
+        "main_zip_url": f"https://github.com/{username}/{repo}/archive/refs/heads/{branch}.zip",
+    }
+
+
 class AddApartmentDialog(QDialog):
     def __init__(
         self,
