@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from gui import MainWindow
 from key_manager import KeyManager
 from storage import StorageError, ensure_data_file_exists, load_data, save_data
+from translations import tr
 
 
 def get_data_file_path() -> str:
@@ -29,7 +30,7 @@ def load_config_data_path() -> str:
     config = load_data(str(CONFIG_FILE))
     data_path = config.get("data_path", default_data_path)
     if not isinstance(data_path, str) or not data_path.strip():
-        raise StorageError("Некорректный config.json: поле 'data_path' должно быть непустой строкой.")
+        raise StorageError(tr("invalid_config_data_path"))
     return data_path.strip()
 
 
@@ -40,18 +41,15 @@ def save_config_data_path(data_path: str) -> None:
 def ask_switch_mode(new_path: str) -> str | None:
     dialog = QMessageBox()
     dialog.setIcon(QMessageBox.Question)
-    dialog.setWindowTitle("Смена data.json")
-    dialog.setText("Вы выбрали новый путь к data.json.")
+    dialog.setWindowTitle(tr("data_source_change"))
+    dialog.setText(tr("new_data_path_selected"))
     dialog.setInformativeText(
-        f"Новый файл:\n{new_path}\n\n"
-        "Выберите, как продолжить:\n"
-        "• Использовать новый файл (пустой, если файла ещё нет)\n"
-        "• Перенести текущие данные в новый файл"
+        tr("switch_mode_details", path=new_path)
     )
 
-    use_new_btn = dialog.addButton("Использовать новый файл", QMessageBox.AcceptRole)
-    migrate_btn = dialog.addButton("Перенести текущие данные в новый файл", QMessageBox.ActionRole)
-    cancel_btn = dialog.addButton("Отмена", QMessageBox.RejectRole)
+    use_new_btn = dialog.addButton(tr("use_new_file"), QMessageBox.AcceptRole)
+    migrate_btn = dialog.addButton(tr("migrate_data"), QMessageBox.ActionRole)
+    cancel_btn = dialog.addButton(tr("cancel"), QMessageBox.RejectRole)
 
     dialog.exec()
     clicked = dialog.clickedButton()
@@ -67,18 +65,15 @@ def ask_switch_mode(new_path: str) -> str | None:
 def ask_existing_file_mode(new_path: str) -> str | None:
     dialog = QMessageBox()
     dialog.setIcon(QMessageBox.Warning)
-    dialog.setWindowTitle("Файл уже существует")
-    dialog.setText("По указанному пути уже есть data.json.")
+    dialog.setWindowTitle(tr("file_exists"))
+    dialog.setText(tr("data_file_exists"))
     dialog.setInformativeText(
-        f"Файл:\n{new_path}\n\n"
-        "Выберите действие:\n"
-        "• Загрузить существующий файл\n"
-        "• Перезаписать его текущими данными"
+        tr("existing_file_details", path=new_path)
     )
 
-    load_btn = dialog.addButton("Загрузить существующий файл", QMessageBox.AcceptRole)
-    overwrite_btn = dialog.addButton("Перезаписать его текущими данными", QMessageBox.DestructiveRole)
-    cancel_btn = dialog.addButton("Отмена", QMessageBox.RejectRole)
+    load_btn = dialog.addButton(tr("load_existing_file"), QMessageBox.AcceptRole)
+    overwrite_btn = dialog.addButton(tr("overwrite_current_data"), QMessageBox.DestructiveRole)
+    cancel_btn = dialog.addButton(tr("cancel"), QMessageBox.RejectRole)
 
     dialog.exec()
     clicked = dialog.clickedButton()
@@ -101,14 +96,14 @@ def main() -> int:
     except StorageError as e:
         QMessageBox.warning(
             None,
-            "Ошибка настроек",
-            f"Не удалось применить config.json. Будет использован стандартный data.json.\n\n{e}",
+            tr("settings_error"),
+            tr("config_apply_failed", error=e),
         )
         data_file = get_data_file_path()
         try:
             ensure_data_file_exists(data_file)
         except StorageError as create_error:
-            QMessageBox.critical(None, "Критическая ошибка", str(create_error))
+            QMessageBox.critical(None, tr("critical_error"), str(create_error))
             return 1
 
     def save_current_data() -> None:
@@ -121,14 +116,14 @@ def main() -> int:
     except StorageError as e:
         QMessageBox.warning(
             None,
-            "Ошибка загрузки данных",
-            f"Программа запущена с пустыми данными.\n\n{e}",
+            tr("data_load_error"),
+            tr("empty_data_started", error=e),
         )
     except Exception as e:
         QMessageBox.warning(
             None,
-            "Ошибка загрузки данных",
-            f"Некорректный формат сохраненных данных. Программа запущена с пустыми данными.\n\n{e}",
+            tr("data_load_error"),
+            tr("invalid_saved_format", error=e),
         )
 
     def load_into_manager(file_path: str) -> None:
@@ -136,7 +131,7 @@ def main() -> int:
         try:
             manager.load_dict(loaded_data)
         except Exception as e:
-            raise StorageError(f"Файл повреждён или имеет некорректный формат: {file_path}. ({e})") from e
+            raise StorageError(tr("file_corrupted", file_path=file_path, error=e)) from e
 
     def switch_to_data_path(new_data_path: str) -> None:
         nonlocal data_file
@@ -148,9 +143,9 @@ def main() -> int:
     def apply_data_path(new_data_path: str) -> bool:
         new_data_path = new_data_path.strip()
         if not new_data_path:
-            raise StorageError("Путь к data.json не может быть пустым.")
+            raise StorageError(tr("data_path_empty"))
         if new_data_path == data_file:
-            QMessageBox.information(None, "Настройки", "Указан текущий путь data.json. Изменений нет.")
+            QMessageBox.information(None, tr("settings"), tr("same_data_path"))
             return True
 
         current_data = manager.to_dict()
@@ -164,12 +159,12 @@ def main() -> int:
             if existing_mode == "load_existing":
                 load_into_manager(new_data_path)
                 switch_to_data_path(new_data_path)
-                QMessageBox.information(None, "Готово", "Загружены данные из существующего файла.")
+                QMessageBox.information(None, tr("done"), tr("loaded_existing_data"))
                 return True
 
             save_data(new_data_path, current_data)
             switch_to_data_path(new_data_path)
-            QMessageBox.information(None, "Готово", "Существующий файл перезаписан текущими данными.")
+            QMessageBox.information(None, tr("done"), tr("overwritten_existing_file"))
             return True
 
         switch_mode = ask_switch_mode(new_data_path)
@@ -179,13 +174,13 @@ def main() -> int:
         if switch_mode == "migrate":
             save_data(new_data_path, current_data)
             switch_to_data_path(new_data_path)
-            QMessageBox.information(None, "Готово", "Текущие данные перенесены в новый файл.")
+            QMessageBox.information(None, tr("done"), tr("migrated_to_new_file"))
             return True
 
         ensure_data_file_exists(new_data_path)
         load_into_manager(new_data_path)
         switch_to_data_path(new_data_path)
-        QMessageBox.information(None, "Готово", "Подключен новый файл данных.")
+        QMessageBox.information(None, tr("done"), tr("new_data_connected"))
         return True
 
     window = MainWindow(manager, data_file, apply_data_path)

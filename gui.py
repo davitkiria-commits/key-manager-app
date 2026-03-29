@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from key_manager import KeyManager, KeyManagerError, Person
+from translations import tr
 
 
 UPDATE_CONFIG = {
@@ -51,6 +52,18 @@ def get_update_urls() -> dict[str, str]:
     }
 
 
+def ask_yes_no(parent: QWidget, title: str, text: str, default_to_yes: bool = True) -> bool:
+    dialog = QMessageBox(parent)
+    dialog.setIcon(QMessageBox.Question)
+    dialog.setWindowTitle(title)
+    dialog.setText(text)
+    yes_button = dialog.addButton(tr("yes"), QMessageBox.YesRole)
+    no_button = dialog.addButton(tr("no"), QMessageBox.NoRole)
+    dialog.setDefaultButton(yes_button if default_to_yes else no_button)
+    dialog.exec()
+    return dialog.clickedButton() == yes_button
+
+
 class AddApartmentDialog(QDialog):
     def __init__(
         self,
@@ -64,7 +77,7 @@ class AddApartmentDialog(QDialog):
         self.apartment = self.manager.get_apartment(apartment_id) if apartment_id is not None else None
 
         is_edit = self.apartment is not None
-        self.setWindowTitle("Редактировать квартиру" if is_edit else "Добавить квартиру")
+        self.setWindowTitle(tr("edit_apartment_title") if is_edit else tr("add_apartment_title"))
 
         self.building_edit = QLineEdit(self.apartment.building if self.apartment else "")
         self.floor_edit = QLineEdit(str(self.apartment.floor) if self.apartment else "")
@@ -78,12 +91,12 @@ class AddApartmentDialog(QDialog):
             self.total_keys_spin.setValue(1)
 
         form = QFormLayout()
-        form.addRow("Корпус:", self.building_edit)
-        form.addRow("Этаж:", self.floor_edit)
-        form.addRow("Квартира:", self.apartment_edit)
-        form.addRow("Всего ключей:", self.total_keys_spin)
+        form.addRow(f"{tr('building')}:", self.building_edit)
+        form.addRow(f"{tr('floor')}:", self.floor_edit)
+        form.addRow(f"{tr('apartment')}:", self.apartment_edit)
+        form.addRow(f"{tr('total_keys')}:", self.total_keys_spin)
 
-        save_btn = QPushButton("Сохранить" if is_edit else "Добавить")
+        save_btn = QPushButton(tr("save") if is_edit else tr("add"))
         save_btn.clicked.connect(self._save)
 
         layout = QVBoxLayout(self)
@@ -98,7 +111,7 @@ class AddApartmentDialog(QDialog):
             total = self.total_keys_spin.value()
 
             if not building or not floor_text or not apt:
-                raise KeyManagerError("Заполните все поля.")
+                raise KeyManagerError(tr("fill_all_fields"))
 
             floor = int(floor_text)
             if self.apartment:
@@ -113,7 +126,7 @@ class AddApartmentDialog(QDialog):
                 self.manager.add_apartment(building=building, floor=floor, apartment_number=apt, total_keys=total)
             self.accept()
         except (ValueError, KeyManagerError) as e:
-            QMessageBox.warning(self, "Ошибка", str(e))
+            QMessageBox.warning(self, tr("error"), str(e))
 
 
 class PersonEditDialog(QDialog):
@@ -122,16 +135,16 @@ class PersonEditDialog(QDialog):
         self.manager = manager
         self.person = person
 
-        self.setWindowTitle("Редактировать получателя" if person else "Добавить получателя")
+        self.setWindowTitle(tr("edit_recipient_title") if person else tr("add_recipient_title"))
 
         self.name_edit = QLineEdit(person.full_name if person else "")
         self.role_edit = QLineEdit(person.role if person else "")
 
         form = QFormLayout()
-        form.addRow("ФИО:", self.name_edit)
-        form.addRow("Роль:", self.role_edit)
+        form.addRow(tr("full_name"), self.name_edit)
+        form.addRow(tr("role"), self.role_edit)
 
-        save_btn = QPushButton("Сохранить")
+        save_btn = QPushButton(tr("save"))
         save_btn.clicked.connect(self._save)
 
         layout = QVBoxLayout(self)
@@ -154,26 +167,26 @@ class PersonEditDialog(QDialog):
                 )
             self.accept()
         except KeyManagerError as e:
-            QMessageBox.warning(self, "Ошибка", str(e))
+            QMessageBox.warning(self, tr("error"), str(e))
 
 
 class PersonsDialog(QDialog):
     def __init__(self, manager: KeyManager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.manager = manager
-        self.setWindowTitle("Получатели")
+        self.setWindowTitle(tr("recipients_title"))
         self.resize(760, 500)
 
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Поиск по имени...")
+        self.search_edit.setPlaceholderText(tr("search_by_name"))
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["ID", "ФИО", "Роль", "Активен"])
+        self.table.setHorizontalHeaderLabels([tr("id"), tr("full_name").rstrip(":"), tr("role").rstrip(":"), tr("active")])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
 
-        btn_add = QPushButton("Добавить")
-        btn_edit = QPushButton("Редактировать")
-        btn_toggle = QPushButton("Отключить/Активировать")
+        btn_add = QPushButton(tr("add"))
+        btn_edit = QPushButton(tr("edit_apartment"))
+        btn_toggle = QPushButton(tr("disable_enable"))
 
         btn_add.clicked.connect(self._on_add)
         btn_edit.clicked.connect(self._on_edit)
@@ -203,7 +216,7 @@ class PersonsDialog(QDialog):
             self.table.setItem(row, 0, QTableWidgetItem(str(person.person_id)))
             self.table.setItem(row, 1, QTableWidgetItem(person.full_name))
             self.table.setItem(row, 2, QTableWidgetItem(person.role))
-            self.table.setItem(row, 3, QTableWidgetItem("Да" if person.is_active else "Нет"))
+            self.table.setItem(row, 3, QTableWidgetItem(tr("yes") if person.is_active else tr("no")))
 
         self.table.resizeColumnsToContents()
 
@@ -224,7 +237,7 @@ class PersonsDialog(QDialog):
     def _on_edit(self) -> None:
         person_id = self._selected_person_id()
         if person_id is None:
-            QMessageBox.information(self, "Внимание", "Выберите человека в таблице.")
+            QMessageBox.information(self, tr("attention"), tr("select_person_in_table"))
             return
 
         person = self.manager.get_person(person_id)
@@ -237,7 +250,7 @@ class PersonsDialog(QDialog):
     def _on_toggle(self) -> None:
         person_id = self._selected_person_id()
         if person_id is None:
-            QMessageBox.information(self, "Внимание", "Выберите человека в таблице.")
+            QMessageBox.information(self, tr("attention"), tr("select_person_in_table"))
             return
 
         person = self.manager.get_person(person_id)
@@ -252,7 +265,7 @@ class IssueDialog(QDialog):
     def __init__(self, manager: KeyManager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.manager = manager
-        self.setWindowTitle("Выдача ключей")
+        self.setWindowTitle(tr("issue_keys_title"))
 
         self.apartment_combo = QComboBox()
         self.recipient_combo = QComboBox()
@@ -262,17 +275,17 @@ class IssueDialog(QDialog):
         self.count_spin = QSpinBox()
         self.count_spin.setRange(1, 1000)
 
-        self.limit_label = QLabel("Доступно: -")
+        self.limit_label = QLabel(tr("available_dash"))
         self.person_hint_label = QLabel("")
 
         form = QFormLayout()
-        form.addRow("Квартира:", self.apartment_combo)
-        form.addRow("Получатель:", self.recipient_combo)
+        form.addRow(f"{tr('apartment')}:", self.apartment_combo)
+        form.addRow(tr("recipient"), self.recipient_combo)
         form.addRow("", self.person_hint_label)
-        form.addRow("Количество:", self.count_spin)
-        form.addRow("Лимит:", self.limit_label)
+        form.addRow(tr("quantity"), self.count_spin)
+        form.addRow(tr("limit"), self.limit_label)
 
-        self.issue_btn = QPushButton("Выдать")
+        self.issue_btn = QPushButton(tr("issue_keys"))
         self.issue_btn.clicked.connect(self._issue)
 
         layout = QVBoxLayout(self)
@@ -286,7 +299,7 @@ class IssueDialog(QDialog):
         self.apartment_combo.clear()
         for a in self.manager.get_apartments():
             self.apartment_combo.addItem(
-                f"Корпус {a.building}, этаж {a.floor}, кв. {a.apartment_number}",
+                tr("building_floor_apartment", building=a.building, floor=a.floor, apartment=a.apartment_number),
                 a.apartment_id,
             )
 
@@ -301,11 +314,11 @@ class IssueDialog(QDialog):
             completer.setCaseSensitivity(Qt.CaseInsensitive)
 
         if not active_persons:
-            self.person_hint_label.setText("Нет активных получателей. Добавьте людей в окне 'Получатели'.")
+            self.person_hint_label.setText(tr("no_active_recipients"))
             self.recipient_combo.setEnabled(False)
             self.issue_btn.setEnabled(False)
         else:
-            self.person_hint_label.setText("Показываются только активные получатели.")
+            self.person_hint_label.setText(tr("only_active_recipients"))
             self.recipient_combo.setEnabled(True)
             self.issue_btn.setEnabled(True)
 
@@ -315,45 +328,45 @@ class IssueDialog(QDialog):
         apartment_id = self.apartment_combo.currentData()
         apartment = self.manager.get_apartment(apartment_id) if apartment_id is not None else None
         if apartment:
-            self.limit_label.setText(f"Доступно: {apartment.available_keys}")
+            self.limit_label.setText(tr("available_value", value=apartment.available_keys))
             self.count_spin.setMaximum(max(1, apartment.available_keys))
         else:
-            self.limit_label.setText("Доступно: -")
+            self.limit_label.setText(tr("available_dash"))
 
     def _issue(self) -> None:
         try:
             apartment_id = self.apartment_combo.currentData()
             if apartment_id is None:
-                raise KeyManagerError("Нет доступных квартир для выдачи.")
+                raise KeyManagerError(tr("no_apartments_to_issue"))
 
             person_id = self.recipient_combo.currentData()
             if person_id is None:
-                raise KeyManagerError("Выберите получателя из списка.")
+                raise KeyManagerError(tr("select_recipient_from_list"))
 
             count = self.count_spin.value()
             self.manager.issue_keys(apartment_id=apartment_id, recipient_id=person_id, count=count)
             self.accept()
         except KeyManagerError as e:
-            QMessageBox.warning(self, "Ошибка выдачи", str(e))
+            QMessageBox.warning(self, tr("issue_error"), str(e))
 
 
 class ReturnDialog(QDialog):
     def __init__(self, manager: KeyManager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.manager = manager
-        self.setWindowTitle("Возврат ключей")
+        self.setWindowTitle(tr("return_keys_title"))
 
         self.issue_combo = QComboBox()
         self.count_spin = QSpinBox()
         self.count_spin.setRange(1, 1000)
-        self.remaining_label = QLabel("Осталось вернуть: -")
+        self.remaining_label = QLabel(tr("remaining_dash"))
 
         form = QFormLayout()
-        form.addRow("Активная выдача:", self.issue_combo)
-        form.addRow("Количество возврата:", self.count_spin)
-        form.addRow("Статус:", self.remaining_label)
+        form.addRow(tr("active_issue"), self.issue_combo)
+        form.addRow(tr("return_quantity"), self.count_spin)
+        form.addRow(tr("status"), self.remaining_label)
 
-        return_btn = QPushButton("Вернуть")
+        return_btn = QPushButton(tr("return"))
         return_btn.clicked.connect(self._return_keys)
 
         layout = QVBoxLayout(self)
@@ -370,7 +383,7 @@ class ReturnDialog(QDialog):
             if apartment:
                 text = (
                     f"#{issue.issue_id} | {issue.recipient_name} | "
-                    f"кв. {apartment.apartment_number} | осталось: {issue.active_count}"
+                    f"{tr('apartment')}. {apartment.apartment_number} | {tr('remaining_to_return', value=issue.active_count).lower()}"
                 )
                 self.issue_combo.addItem(text, issue.issue_id)
 
@@ -380,40 +393,40 @@ class ReturnDialog(QDialog):
         issue_id = self.issue_combo.currentData()
         issue = next((x for x in self.manager.get_active_issues() if x.issue_id == issue_id), None)
         if issue:
-            self.remaining_label.setText(f"Осталось вернуть: {issue.active_count}")
+            self.remaining_label.setText(tr("remaining_to_return", value=issue.active_count))
             self.count_spin.setMaximum(max(1, issue.active_count))
         else:
-            self.remaining_label.setText("Осталось вернуть: -")
+            self.remaining_label.setText(tr("remaining_dash"))
 
     def _return_keys(self) -> None:
         try:
             issue_id = self.issue_combo.currentData()
             if issue_id is None:
-                raise KeyManagerError("Нет активных выдач для возврата.")
+                raise KeyManagerError(tr("no_active_issues_to_return"))
 
             self.manager.return_keys(issue_id=issue_id, count=self.count_spin.value())
             self.accept()
         except KeyManagerError as e:
-            QMessageBox.warning(self, "Ошибка возврата", str(e))
+            QMessageBox.warning(self, tr("return_error"), str(e))
 
 
 class LostDialog(QDialog):
     def __init__(self, manager: KeyManager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.manager = manager
-        self.setWindowTitle("Отметить утерю")
+        self.setWindowTitle(tr("mark_lost_title"))
 
         self.apartment_combo = QComboBox()
         self.count_spin = QSpinBox()
         self.count_spin.setRange(1, 1000)
-        self.limit_label = QLabel("Доступно: -")
+        self.limit_label = QLabel(tr("available_dash"))
 
         form = QFormLayout()
-        form.addRow("Квартира:", self.apartment_combo)
-        form.addRow("Количество:", self.count_spin)
-        form.addRow("Лимит:", self.limit_label)
+        form.addRow(f"{tr('apartment')}:", self.apartment_combo)
+        form.addRow(tr("quantity"), self.count_spin)
+        form.addRow(tr("limit"), self.limit_label)
 
-        lost_btn = QPushButton("Списать")
+        lost_btn = QPushButton(tr("write_off"))
         lost_btn.clicked.connect(self._mark_lost)
 
         layout = QVBoxLayout(self)
@@ -427,7 +440,7 @@ class LostDialog(QDialog):
         self.apartment_combo.clear()
         for a in self.manager.get_apartments():
             self.apartment_combo.addItem(
-                f"Корпус {a.building}, этаж {a.floor}, кв. {a.apartment_number}",
+                tr("building_floor_apartment", building=a.building, floor=a.floor, apartment=a.apartment_number),
                 a.apartment_id,
             )
         self._update_limit()
@@ -436,28 +449,28 @@ class LostDialog(QDialog):
         apartment_id = self.apartment_combo.currentData()
         apartment = self.manager.get_apartment(apartment_id) if apartment_id is not None else None
         if apartment:
-            self.limit_label.setText(f"Доступно: {apartment.available_keys}")
+            self.limit_label.setText(tr("available_value", value=apartment.available_keys))
             self.count_spin.setMaximum(max(1, apartment.available_keys))
         else:
-            self.limit_label.setText("Доступно: -")
+            self.limit_label.setText(tr("available_dash"))
 
     def _mark_lost(self) -> None:
         try:
             apartment_id = self.apartment_combo.currentData()
             if apartment_id is None:
-                raise KeyManagerError("Нет доступных квартир.")
+                raise KeyManagerError(tr("no_apartments"))
 
             self.manager.mark_lost(apartment_id=apartment_id, count=self.count_spin.value())
             self.accept()
         except KeyManagerError as e:
-            QMessageBox.warning(self, "Ошибка", str(e))
+            QMessageBox.warning(self, tr("error"), str(e))
 
 
 class HistoryDialog(QDialog):
     def __init__(self, manager: KeyManager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.manager = manager
-        self.setWindowTitle("История операций")
+        self.setWindowTitle(tr("history_operations_title"))
         self.resize(1100, 600)
 
         self.date_from_edit = QDateEdit()
@@ -485,25 +498,25 @@ class HistoryDialog(QDialog):
             completer.setCaseSensitivity(Qt.CaseInsensitive)
 
         self.apartment_edit = QLineEdit()
-        self.apartment_edit.setPlaceholderText("Номер квартиры")
+        self.apartment_edit.setPlaceholderText(tr("apartment_number"))
 
-        self.reset_btn = QPushButton("Сбросить фильтры")
+        self.reset_btn = QPushButton(tr("reset_filters"))
         self.reset_btn.clicked.connect(self._reset_filters)
 
         filters = QHBoxLayout()
-        filters.addWidget(QLabel("Дата с:"))
+        filters.addWidget(QLabel(tr("date_from")))
         filters.addWidget(self.date_from_edit)
-        filters.addWidget(QLabel("Дата по:"))
+        filters.addWidget(QLabel(tr("date_to")))
         filters.addWidget(self.date_to_edit)
-        filters.addWidget(QLabel("Человек:"))
+        filters.addWidget(QLabel(tr("person")))
         filters.addWidget(self.person_combo)
-        filters.addWidget(QLabel("Квартира:"))
+        filters.addWidget(QLabel(f"{tr('apartment')}:"))
         filters.addWidget(self.apartment_edit)
         filters.addWidget(self.reset_btn)
 
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["Дата и время", "Действие", "Корпус", "Этаж", "Квартира", "Получатель", "Количество", "Статус"]
+            [tr("datetime"), tr("action"), tr("building"), tr("floor"), tr("apartment"), tr("recipient_col"), tr("quantity").rstrip(":"), tr("status").rstrip(":")]
         )
         self.table.setSortingEnabled(True)
 
@@ -553,15 +566,17 @@ class HistoryDialog(QDialog):
 
         self.table.setRowCount(len(rows))
         for row, item in enumerate(rows):
+            operation_text = tr(f"operation_{item.operation_type.lower()}")
+            status_text = tr(f"status_{item.status.lower().replace(' ', '_')}")
             values = [
                 item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                item.operation_type,
+                operation_text if operation_text != f"operation_{item.operation_type.lower()}" else item.operation_type,
                 item.building,
                 item.floor,
                 item.apartment_number,
                 item.recipient,
                 str(item.quantity),
-                item.status,
+                status_text if status_text != f"status_{item.status.lower().replace(' ', '_')}" else item.status,
             ]
             for col, value in enumerate(values):
                 self.table.setItem(row, col, QTableWidgetItem(value))
@@ -574,11 +589,11 @@ class KeysOnHandDialog(QDialog):
     def __init__(self, manager: KeyManager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.manager = manager
-        self.setWindowTitle("Ключи на руках")
+        self.setWindowTitle(tr("keys_on_hand_title"))
         self.resize(900, 500)
 
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Корпус", "Этаж", "Квартира", "Кто держит", "Количество", "Дата выдачи"])
+        self.table.setHorizontalHeaderLabels([tr("building"), tr("floor"), tr("apartment"), tr("who_holds"), tr("quantity").rstrip(":"), tr("issue_date")])
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.table)
@@ -619,19 +634,19 @@ class SettingsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._on_save_path = on_save_path
-        self.setWindowTitle("Настройки")
+        self.setWindowTitle(tr("settings"))
         self.resize(650, 160)
 
         self.path_edit = QLineEdit(current_data_path)
 
-        choose_btn = QPushButton("Выбрать файл")
-        save_btn = QPushButton("Сохранить")
+        choose_btn = QPushButton(tr("choose_file"))
+        save_btn = QPushButton(tr("save"))
         choose_btn.clicked.connect(self._choose_file)
         save_btn.clicked.connect(self._save)
 
         form = QFormLayout()
-        form.addRow("Версия приложения:", QLabel(app_version))
-        form.addRow("Путь к data.json:", self.path_edit)
+        form.addRow(tr("application_version"), QLabel(app_version))
+        form.addRow(tr("data_json_path"), self.path_edit)
 
         controls = QHBoxLayout()
         controls.addWidget(choose_btn)
@@ -644,9 +659,9 @@ class SettingsDialog(QDialog):
     def _choose_file(self) -> None:
         selected_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Выберите data.json",
+            tr("select_data_json"),
             self.path_edit.text().strip() or "data.json",
-            "JSON Files (*.json);;All Files (*)",
+            tr("json_files"),
         )
         if selected_path:
             self.path_edit.setText(selected_path)
@@ -654,14 +669,14 @@ class SettingsDialog(QDialog):
     def _save(self) -> None:
         path = self.path_edit.text().strip()
         if not path:
-            QMessageBox.warning(self, "Ошибка", "Укажите путь к файлу data.json.")
+            QMessageBox.warning(self, tr("error"), tr("specify_data_json_path"))
             return
         try:
             changed = self._on_save_path(path)
             if changed:
                 self.accept()
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка сохранения настроек", str(e))
+            QMessageBox.critical(self, tr("settings_save_error"), str(e))
 
 
 class MainWindow(QMainWindow):
@@ -677,33 +692,33 @@ class MainWindow(QMainWindow):
         self.manager = manager
         self.data_file_path = data_file_path
         self.on_change_data_path = on_change_data_path
-        self.setWindowTitle("Учет ключей")
+        self.setWindowTitle(tr("app_title"))
         self.resize(1100, 650)
 
         root = QWidget()
         self.setCentralWidget(root)
 
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Поиск по корпусу / этажу / квартире...")
+        self.search_edit.setPlaceholderText(tr("search_building"))
 
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["ID", "Корпус", "Этаж", "Квартира", "Всего ключей", "Выдано", "Утеряно", "Доступно"]
+            [tr("id"), tr("building"), tr("floor"), tr("apartment"), tr("total_keys"), tr("issued"), tr("lost"), tr("available")]
         )
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
 
-        btn_add = QPushButton("Добавить квартиру")
-        self.btn_edit_apartment = QPushButton("Редактировать квартиру")
-        btn_issue = QPushButton("Выдать ключи")
-        btn_return = QPushButton("Вернуть ключи")
-        btn_lost = QPushButton("Отметить утерю")
-        btn_history = QPushButton("История")
-        btn_persons = QPushButton("Получатели")
-        btn_keys_on_hand = QPushButton("Ключи на руках")
-        btn_export_excel = QPushButton("Экспорт в Excel")
-        btn_check_updates = QPushButton("Проверить обновления")
-        btn_settings = QPushButton("Настройки")
+        btn_add = QPushButton(tr("add_apartment"))
+        self.btn_edit_apartment = QPushButton(tr("edit_apartment"))
+        btn_issue = QPushButton(tr("issue_keys"))
+        btn_return = QPushButton(tr("return_keys"))
+        btn_lost = QPushButton(tr("mark_lost"))
+        btn_history = QPushButton(tr("history"))
+        btn_persons = QPushButton(tr("recipients"))
+        btn_keys_on_hand = QPushButton(tr("keys_on_hand"))
+        btn_export_excel = QPushButton(tr("export_excel"))
+        btn_check_updates = QPushButton(tr("check_updates"))
+        btn_settings = QPushButton(tr("settings"))
 
         btn_add.clicked.connect(self._on_add)
         self.btn_edit_apartment.clicked.connect(self._on_edit_apartment)
@@ -798,7 +813,7 @@ class MainWindow(QMainWindow):
     def _on_edit_apartment(self) -> None:
         apartment_id = self._selected_apartment_id()
         if apartment_id is None:
-            QMessageBox.information(self, "Внимание", "Выберите квартиру в таблице.")
+            QMessageBox.information(self, tr("attention"), tr("select_apartment_in_table"))
             return
 
         dialog = AddApartmentDialog(self.manager, apartment_id=apartment_id, parent=self)
@@ -838,9 +853,9 @@ class MainWindow(QMainWindow):
     def _on_export_excel(self) -> None:
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Сохранить Excel-файл",
+            tr("save_excel_file"),
             "key_manager_export.xlsx",
-            "Excel Files (*.xlsx)",
+            tr("excel_files"),
         )
         if not file_path:
             return
@@ -853,8 +868,8 @@ class MainWindow(QMainWindow):
         except ImportError:
             QMessageBox.critical(
                 self,
-                "Ошибка экспорта",
-                "Библиотека openpyxl не установлена. Установите зависимости из requirements.txt.",
+                tr("export_error"),
+                tr("openpyxl_not_installed"),
             )
             return
 
@@ -862,8 +877,8 @@ class MainWindow(QMainWindow):
             workbook = Workbook()
 
             apartments_sheet = workbook.active
-            apartments_sheet.title = "Квартиры"
-            apartments_sheet.append(["Корпус", "Этаж", "Квартира", "Всего ключей", "Выдано", "Утеряно", "Доступно"])
+            apartments_sheet.title = tr("apartments_sheet")
+            apartments_sheet.append([tr("building"), tr("floor"), tr("apartment"), tr("total_keys"), tr("issued"), tr("lost"), tr("available")])
             for apartment in self.manager.get_apartments():
                 apartments_sheet.append(
                     [
@@ -877,8 +892,8 @@ class MainWindow(QMainWindow):
                     ]
                 )
 
-            history_sheet = workbook.create_sheet("История")
-            history_sheet.append(["Дата/время", "Действие", "Корпус", "Этаж", "Квартира", "Получатель", "Количество", "Статус"])
+            history_sheet = workbook.create_sheet(tr("history_sheet"))
+            history_sheet.append([tr("date_time_short"), tr("action"), tr("building"), tr("floor"), tr("apartment"), tr("recipient_col"), tr("quantity").rstrip(":"), tr("status").rstrip(":")])
             for item in self.manager.get_history():
                 history_sheet.append(
                     [
@@ -893,8 +908,8 @@ class MainWindow(QMainWindow):
                     ]
                 )
 
-            active_sheet = workbook.create_sheet("Ключи на руках")
-            active_sheet.append(["Корпус", "Этаж", "Квартира", "Получатель", "Количество", "Дата выдачи"])
+            active_sheet = workbook.create_sheet(tr("active_keys_sheet"))
+            active_sheet.append([tr("building"), tr("floor"), tr("apartment"), tr("recipient_col"), tr("quantity").rstrip(":"), tr("issue_date")])
             for issue in self.manager.get_active_issues():
                 apartment = self.manager.get_apartment(issue.apartment_id)
                 if apartment:
@@ -911,9 +926,9 @@ class MainWindow(QMainWindow):
                 active_sheet.append(row)
 
             workbook.save(file_path)
-            QMessageBox.information(self, "Экспорт завершен", f"Данные успешно сохранены в файл:\n{file_path}")
+            QMessageBox.information(self, tr("export_done"), tr("saved_to_file", file_path=file_path))
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить файл Excel.\n\n{e}")
+            QMessageBox.critical(self, tr("export_error"), tr("cannot_save_excel", error=e))
 
     def _on_settings(self) -> None:
         dialog = SettingsDialog(self.data_file_path, self._get_local_version(), self._apply_data_path, self)
@@ -925,53 +940,45 @@ class MainWindow(QMainWindow):
         try:
             remote_version = self._get_remote_version()
         except requests.RequestException as e:
-            QMessageBox.critical(self, "Ошибка обновления", f"Не удалось проверить обновления.\n\nПроверьте интернет.\n{e}")
+            QMessageBox.critical(self, tr("update_error"), tr("cannot_check_updates", error=e))
             return
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка обновления", f"Ошибка при проверке версии на GitHub.\n\n{e}")
+            QMessageBox.critical(self, tr("update_error"), tr("github_version_check_error", error=e))
             return
 
         if not self._is_newer_version(remote_version, local_version):
-            QMessageBox.information(self, "Обновление", "У вас последняя версия.")
+            QMessageBox.information(self, tr("update"), tr("you_have_latest"))
             return
 
-        answer = QMessageBox.question(
+        answer = ask_yes_no(
             self,
-            "Доступно обновление",
-            (
-                f"Доступна новая версия {remote_version}\n"
-                f"Текущая версия: {local_version}\n\n"
-                "Обновить сейчас?"
-            ),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+            tr("update_available_title"),
+            tr("update_available_message", remote_version=remote_version, local_version=local_version),
         )
-        if answer != QMessageBox.Yes:
+        if not answer:
             return
 
         try:
             self._download_and_apply_update()
         except requests.RequestException as e:
-            QMessageBox.critical(self, "Ошибка обновления", f"Ошибка скачивания обновления.\n\n{e}")
+            QMessageBox.critical(self, tr("update_error"), tr("update_download_error", error=e))
             return
         except zipfile.BadZipFile as e:
-            QMessageBox.critical(self, "Ошибка обновления", f"Ошибка распаковки архива.\n\n{e}")
+            QMessageBox.critical(self, tr("update_error"), tr("update_unpack_error", error=e))
             return
         except OSError as e:
-            QMessageBox.critical(self, "Ошибка обновления", f"Ошибка записи файлов.\n\n{e}")
+            QMessageBox.critical(self, tr("update_error"), tr("update_write_error", error=e))
             return
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка обновления", f"Не удалось установить обновление.\n\n{e}")
+            QMessageBox.critical(self, tr("update_error"), tr("update_install_error", error=e))
             return
 
-        restart = QMessageBox.question(
+        restart = ask_yes_no(
             self,
-            "Обновление установлено",
-            "Обновление установлено. Перезапустить приложение?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+            tr("update_installed"),
+            tr("restart_after_update"),
         )
-        if restart == QMessageBox.Yes:
+        if restart:
             self._restart_application()
 
     def _get_app_dir(self) -> Path:
@@ -995,7 +1002,7 @@ class MainWindow(QMainWindow):
         response.raise_for_status()
         remote_version = response.text.strip()
         if not remote_version:
-            raise ValueError("Пустой version.txt в репозитории.")
+            raise ValueError(tr("empty_version_file"))
         return remote_version
 
     @staticmethod
@@ -1021,8 +1028,8 @@ class MainWindow(QMainWindow):
             temp_path = Path(temp_dir)
             zip_path = temp_path / "update.zip"
 
-            progress = QProgressDialog("Загрузка обновления...", "Отмена", 0, 100, self)
-            progress.setWindowTitle("Обновление")
+            progress = QProgressDialog(tr("downloading_update"), tr("cancel"), 0, 100, self)
+            progress.setWindowTitle(tr("update"))
             progress.setWindowModality(Qt.WindowModal)
             progress.setValue(0)
             progress.show()
@@ -1042,9 +1049,9 @@ class MainWindow(QMainWindow):
                         else:
                             progress.setValue(0)
                         if progress.wasCanceled():
-                            raise RuntimeError("Загрузка обновления отменена пользователем.")
+                            raise RuntimeError(tr("update_canceled"))
 
-            progress.setLabelText("Распаковка и установка обновления...")
+            progress.setLabelText(tr("unpacking_installing_update"))
             progress.setValue(100)
 
             extract_dir = temp_path / "unpacked"
@@ -1058,7 +1065,7 @@ class MainWindow(QMainWindow):
     def _resolve_update_source(self, extract_dir: Path) -> Path:
         unpacked_roots = [p for p in extract_dir.iterdir() if p.is_dir()]
         if not unpacked_roots:
-            raise FileNotFoundError("Не удалось найти распакованную директорию обновления.")
+            raise FileNotFoundError(tr("unpacked_dir_not_found"))
 
         repo_root = unpacked_roots[0]
         dist_root = repo_root / "dist" / "key-manager"
