@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QComboBox,
+    QDateEdit,
     QDialog,
     QFormLayout,
     QHBoxLayout,
@@ -257,22 +258,94 @@ class HistoryDialog(QDialog):
         super().__init__(parent)
         self.manager = manager
         self.setWindowTitle("История операций")
-        self.resize(800, 500)
+        self.resize(900, 550)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Поиск по получателю...")
+
+        self.date_from_edit = QDateEdit()
+        self.date_from_edit.setCalendarPopup(True)
+        self.date_from_edit.setDisplayFormat("yyyy-MM-dd")
+        self.date_from_edit.setSpecialValueText("-")
+        self.date_from_edit.setMinimumDate(QDate(1900, 1, 1))
+        self.date_from_edit.setDate(self.date_from_edit.minimumDate())
+
+        self.date_to_edit = QDateEdit()
+        self.date_to_edit.setCalendarPopup(True)
+        self.date_to_edit.setDisplayFormat("yyyy-MM-dd")
+        self.date_to_edit.setSpecialValueText("-")
+        self.date_to_edit.setMinimumDate(QDate(1900, 1, 1))
+        self.date_to_edit.setDate(self.date_to_edit.minimumDate())
+
+        self.employee_edit = QLineEdit()
+        self.employee_edit.setPlaceholderText("Сотрудник / получатель")
+
+        self.reset_btn = QPushButton("Сбросить фильтры")
+        self.reset_btn.clicked.connect(self._reset_filters)
+
+        filters = QHBoxLayout()
+        filters.addWidget(QLabel("Поиск получателя:"))
+        filters.addWidget(self.search_edit)
+        filters.addWidget(QLabel("Дата с:"))
+        filters.addWidget(self.date_from_edit)
+        filters.addWidget(QLabel("Дата по:"))
+        filters.addWidget(self.date_to_edit)
+        filters.addWidget(QLabel("Сотрудник:"))
+        filters.addWidget(self.employee_edit)
+        filters.addWidget(self.reset_btn)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Время", "Тип", "Квартира", "Детали"])
         self.table.setSortingEnabled(True)
 
         layout = QVBoxLayout(self)
+        layout.addLayout(filters)
         layout.addWidget(self.table)
+
+        self.search_edit.textChanged.connect(self._fill)
+        self.employee_edit.textChanged.connect(self._fill)
+        self.date_from_edit.dateChanged.connect(self._fill)
+        self.date_to_edit.dateChanged.connect(self._fill)
 
         self._fill()
 
-    def _fill(self) -> None:
-        history = self.manager.get_history()
-        self.table.setRowCount(len(history))
+    def _reset_filters(self) -> None:
+        self.search_edit.clear()
+        self.employee_edit.clear()
+        self.date_from_edit.setDate(self.date_from_edit.minimumDate())
+        self.date_to_edit.setDate(self.date_to_edit.minimumDate())
+        self._fill()
 
-        for row, item in enumerate(history):
+    def _fill(self) -> None:
+        search_text = self.search_edit.text().strip().lower()
+        employee_text = self.employee_edit.text().strip().lower()
+
+        date_from = self.date_from_edit.date()
+        date_to = self.date_to_edit.date()
+        has_date_from = date_from != self.date_from_edit.minimumDate()
+        has_date_to = date_to != self.date_to_edit.minimumDate()
+
+        filtered = []
+        for item in self.manager.get_history():
+            recipient_text = item.recipient.lower() if item.recipient else ""
+            details_text = item.details.lower()
+
+            if search_text and search_text not in recipient_text and search_text not in details_text:
+                continue
+            if employee_text and employee_text not in recipient_text and employee_text not in details_text:
+                continue
+
+            op_date = QDate(item.timestamp.year, item.timestamp.month, item.timestamp.day)
+            if has_date_from and op_date < date_from:
+                continue
+            if has_date_to and op_date > date_to:
+                continue
+
+            filtered.append(item)
+
+        self.table.setRowCount(len(filtered))
+
+        for row, item in enumerate(filtered):
             apartment = self.manager.get_apartment(item.apartment_id)
             apt_text = "-"
             if apartment:
@@ -296,6 +369,9 @@ class MainWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
 
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Поиск по корпусу / этажу / квартире...")
+
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
             ["ID", "Корпус", "Этаж", "Квартира", "Всего ключей", "Выдано", "Утеряно", "Доступно"]
@@ -313,12 +389,14 @@ class MainWindow(QMainWindow):
         btn_return.clicked.connect(self._on_return)
         btn_lost.clicked.connect(self._on_lost)
         btn_history.clicked.connect(self._on_history)
+        self.search_edit.textChanged.connect(self.refresh_table)
 
         btns = QHBoxLayout()
         for btn in (btn_add, btn_issue, btn_return, btn_lost, btn_history):
             btns.addWidget(btn)
 
         layout = QVBoxLayout(root)
+        layout.addWidget(self.search_edit)
         layout.addWidget(self.table)
         layout.addLayout(btns)
 
@@ -326,6 +404,17 @@ class MainWindow(QMainWindow):
 
     def refresh_table(self) -> None:
         apartments = self.manager.get_apartments()
+        query = self.search_edit.text().strip().lower()
+
+        if query:
+            apartments = [
+                apt
+                for apt in apartments
+                if query in apt.building.lower()
+                or query in str(apt.floor).lower()
+                or query in apt.apartment_number.lower()
+            ]
+
         self.table.setRowCount(len(apartments))
 
         for row, apt in enumerate(apartments):
