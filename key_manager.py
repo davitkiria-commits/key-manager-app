@@ -101,6 +101,50 @@ class KeyManager:
         self._notify_change()
         return apartment
 
+    def update_apartment(
+        self,
+        apartment_id: int,
+        building: str,
+        floor: int,
+        apartment_number: str,
+        total_keys: int,
+    ) -> Apartment:
+        apartment = self._get_apartment(apartment_id)
+
+        building_clean = building.strip()
+        apartment_number_clean = apartment_number.strip()
+        if not building_clean or not apartment_number_clean:
+            raise KeyManagerError("Заполните все поля.")
+        if total_keys < 0:
+            raise KeyManagerError("Общее количество ключей не может быть отрицательным.")
+
+        reserved_keys = apartment.issued_keys + apartment.lost_keys
+        if total_keys < reserved_keys:
+            raise KeyManagerError(
+                "Нельзя установить ключей меньше, чем уже выдано и утеряно "
+                f"({reserved_keys})."
+            )
+
+        apartment.building = building_clean
+        apartment.floor = floor
+        apartment.apartment_number = apartment_number_clean
+        apartment.total_keys = total_keys
+
+        self._add_history(
+            operation_type="EDIT_APARTMENT",
+            apartment=apartment,
+            recipient="",
+            quantity=total_keys,
+            status="Обновлена",
+            details=(
+                "Обновлены данные квартиры: "
+                f"корпус={apartment.building}, этаж={apartment.floor}, "
+                f"квартира={apartment.apartment_number}, всего ключей={apartment.total_keys}"
+            ),
+        )
+        self._notify_change()
+        return apartment
+
     def add_person(self, full_name: str, role: str, is_active: bool = True) -> Person:
         name = full_name.strip()
         if not name:
@@ -430,6 +474,7 @@ class KeyManager:
     def _default_status(operation_type: str) -> str:
         return {
             "ADD_APARTMENT": "Создана",
+            "EDIT_APARTMENT": "Обновлена",
             "ISSUE": "Выдано",
             "RETURN": "Возврат",
             "LOST": "Утеря",

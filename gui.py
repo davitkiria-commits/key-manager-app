@@ -27,17 +27,30 @@ from key_manager import KeyManager, KeyManagerError, Person
 
 
 class AddApartmentDialog(QDialog):
-    def __init__(self, manager: KeyManager, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        manager: KeyManager,
+        apartment_id: int | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.manager = manager
-        self.setWindowTitle("Добавить квартиру")
+        self.apartment_id = apartment_id
+        self.apartment = self.manager.get_apartment(apartment_id) if apartment_id is not None else None
 
-        self.building_edit = QLineEdit()
-        self.floor_edit = QLineEdit()
+        is_edit = self.apartment is not None
+        self.setWindowTitle("Редактировать квартиру" if is_edit else "Добавить квартиру")
+
+        self.building_edit = QLineEdit(self.apartment.building if self.apartment else "")
+        self.floor_edit = QLineEdit(str(self.apartment.floor) if self.apartment else "")
         self.floor_edit.setValidator(QIntValidator(-100, 300, self))
-        self.apartment_edit = QLineEdit()
+        self.apartment_edit = QLineEdit(self.apartment.apartment_number if self.apartment else "")
         self.total_keys_spin = QSpinBox()
-        self.total_keys_spin.setRange(1, 1000)
+        self.total_keys_spin.setRange(0, 1000)
+        if self.apartment:
+            self.total_keys_spin.setValue(self.apartment.total_keys)
+        else:
+            self.total_keys_spin.setValue(1)
 
         form = QFormLayout()
         form.addRow("Корпус:", self.building_edit)
@@ -45,7 +58,7 @@ class AddApartmentDialog(QDialog):
         form.addRow("Квартира:", self.apartment_edit)
         form.addRow("Всего ключей:", self.total_keys_spin)
 
-        save_btn = QPushButton("Добавить")
+        save_btn = QPushButton("Сохранить" if is_edit else "Добавить")
         save_btn.clicked.connect(self._save)
 
         layout = QVBoxLayout(self)
@@ -62,7 +75,17 @@ class AddApartmentDialog(QDialog):
             if not building or not floor_text or not apt:
                 raise KeyManagerError("Заполните все поля.")
 
-            self.manager.add_apartment(building=building, floor=int(floor_text), apartment_number=apt, total_keys=total)
+            floor = int(floor_text)
+            if self.apartment:
+                self.manager.update_apartment(
+                    apartment_id=self.apartment.apartment_id,
+                    building=building,
+                    floor=floor,
+                    apartment_number=apt,
+                    total_keys=total,
+                )
+            else:
+                self.manager.add_apartment(building=building, floor=floor, apartment_number=apt, total_keys=total)
             self.accept()
         except (ValueError, KeyManagerError) as e:
             QMessageBox.warning(self, "Ошибка", str(e))
@@ -638,8 +661,10 @@ class MainWindow(QMainWindow):
             ["ID", "Корпус", "Этаж", "Квартира", "Всего ключей", "Выдано", "Утеряно", "Доступно"]
         )
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
 
         btn_add = QPushButton("Добавить квартиру")
+        self.btn_edit_apartment = QPushButton("Редактировать квартиру")
         btn_issue = QPushButton("Выдать ключи")
         btn_return = QPushButton("Вернуть ключи")
         btn_lost = QPushButton("Отметить утерю")
@@ -650,6 +675,7 @@ class MainWindow(QMainWindow):
         btn_settings = QPushButton("Настройки")
 
         btn_add.clicked.connect(self._on_add)
+        self.btn_edit_apartment.clicked.connect(self._on_edit_apartment)
         btn_issue.clicked.connect(self._on_issue)
         btn_return.clicked.connect(self._on_return)
         btn_lost.clicked.connect(self._on_lost)
@@ -659,10 +685,13 @@ class MainWindow(QMainWindow):
         btn_export_excel.clicked.connect(self._on_export_excel)
         btn_settings.clicked.connect(self._on_settings)
         self.search_edit.textChanged.connect(self.refresh_table)
+        self.table.itemSelectionChanged.connect(self._update_edit_button_state)
+        self.table.itemDoubleClicked.connect(self._on_apartment_double_click)
 
         btns = QHBoxLayout()
         for btn in (
             btn_add,
+            self.btn_edit_apartment,
             btn_issue,
             btn_return,
             btn_lost,
@@ -680,6 +709,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(btns)
 
         self.refresh_table()
+        self._update_edit_button_state()
 
     def refresh_table(self) -> None:
         apartments = self.manager.get_apartments()
@@ -711,11 +741,39 @@ class MainWindow(QMainWindow):
                 self.table.setItem(row, col, QTableWidgetItem(value))
 
         self.table.resizeColumnsToContents()
+        self._update_edit_button_state()
+
+    def _selected_apartment_id(self) -> int | None:
+        row = self.table.currentRow()
+        if row < 0:
+            return None
+
+        item = self.table.item(row, 0)
+        if not item:
+            return None
+
+        return int(item.text())
+
+    def _update_edit_button_state(self) -> None:
+        self.btn_edit_apartment.setEnabled(self._selected_apartment_id() is not None)
 
     def _on_add(self) -> None:
         dialog = AddApartmentDialog(self.manager, self)
         if dialog.exec():
             self.refresh_table()
+
+    def _on_edit_apartment(self) -> None:
+        apartment_id = self._selected_apartment_id()
+        if apartment_id is None:
+            QMessageBox.information(self, "Внимание", "Выберите квартиру в таблице.")
+            return
+
+        dialog = AddApartmentDialog(self.manager, apartment_id=apartment_id, parent=self)
+        if dialog.exec():
+            self.refresh_table()
+
+    def _on_apartment_double_click(self, *_args: object) -> None:
+        self._on_edit_apartment()
 
     def _on_issue(self) -> None:
         dialog = IssueDialog(self.manager, self)
