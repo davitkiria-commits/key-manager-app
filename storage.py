@@ -35,3 +35,16 @@ def save_data(file_path: str, data: Dict[str, Any]) -> None:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except OSError as e:
         raise StorageError(f"Не удалось сохранить данные в {path}. ({e})") from e
+
+
+def ensure_data_file_exists(file_path: str) -> None:
+    path = Path(file_path)
+    if path.exists():
+        return
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
+            json.dump({}, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        raise StorageError(f"Не удалось создать файл данных: {path}. ({e})") from e

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
@@ -559,10 +561,69 @@ class KeysOnHandDialog(QDialog):
         self.table.resizeColumnsToContents()
 
 
+class SettingsDialog(QDialog):
+    def __init__(
+        self,
+        current_data_path: str,
+        on_save_path: Callable[[str], None],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._on_save_path = on_save_path
+        self.setWindowTitle("Настройки")
+        self.resize(650, 160)
+
+        self.path_edit = QLineEdit(current_data_path)
+
+        choose_btn = QPushButton("Выбрать файл")
+        save_btn = QPushButton("Сохранить")
+        choose_btn.clicked.connect(self._choose_file)
+        save_btn.clicked.connect(self._save)
+
+        form = QFormLayout()
+        form.addRow("Путь к data.json:", self.path_edit)
+
+        controls = QHBoxLayout()
+        controls.addWidget(choose_btn)
+        controls.addWidget(save_btn)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addLayout(controls)
+
+    def _choose_file(self) -> None:
+        selected_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Выберите data.json",
+            self.path_edit.text().strip() or "data.json",
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if selected_path:
+            self.path_edit.setText(selected_path)
+
+    def _save(self) -> None:
+        path = self.path_edit.text().strip()
+        if not path:
+            QMessageBox.warning(self, "Ошибка", "Укажите путь к файлу data.json.")
+            return
+        try:
+            self._on_save_path(path)
+            self.accept()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка сохранения настроек", str(e))
+
+
 class MainWindow(QMainWindow):
-    def __init__(self, manager: KeyManager) -> None:
+    def __init__(
+        self,
+        manager: KeyManager,
+        data_file_path: str,
+        on_change_data_path: Callable[[str], None],
+    ) -> None:
         super().__init__()
         self.manager = manager
+        self.data_file_path = data_file_path
+        self.on_change_data_path = on_change_data_path
         self.setWindowTitle("Учет ключей")
         self.resize(1100, 650)
 
@@ -586,6 +647,7 @@ class MainWindow(QMainWindow):
         btn_persons = QPushButton("Получатели")
         btn_keys_on_hand = QPushButton("Ключи на руках")
         btn_export_excel = QPushButton("Экспорт в Excel")
+        btn_settings = QPushButton("Настройки")
 
         btn_add.clicked.connect(self._on_add)
         btn_issue.clicked.connect(self._on_issue)
@@ -595,10 +657,21 @@ class MainWindow(QMainWindow):
         btn_persons.clicked.connect(self._on_persons)
         btn_keys_on_hand.clicked.connect(self._on_keys_on_hand)
         btn_export_excel.clicked.connect(self._on_export_excel)
+        btn_settings.clicked.connect(self._on_settings)
         self.search_edit.textChanged.connect(self.refresh_table)
 
         btns = QHBoxLayout()
-        for btn in (btn_add, btn_issue, btn_return, btn_lost, btn_history, btn_persons, btn_keys_on_hand, btn_export_excel):
+        for btn in (
+            btn_add,
+            btn_issue,
+            btn_return,
+            btn_lost,
+            btn_history,
+            btn_persons,
+            btn_keys_on_hand,
+            btn_export_excel,
+            btn_settings,
+        ):
             btns.addWidget(btn)
 
         layout = QVBoxLayout(root)
@@ -750,3 +823,12 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Экспорт завершен", f"Данные успешно сохранены в файл:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить файл Excel.\n\n{e}")
+
+    def _on_settings(self) -> None:
+        dialog = SettingsDialog(self.data_file_path, self._apply_data_path, self)
+        if dialog.exec():
+            self.refresh_table()
+
+    def _apply_data_path(self, path: str) -> None:
+        self.on_change_data_path(path)
+        self.data_file_path = path
