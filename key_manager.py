@@ -73,6 +73,9 @@ class KeyManager:
         self._next_person_id = 1
         self._on_change = on_change
 
+    def set_on_change(self, on_change: Callable[[], None] | None) -> None:
+        self._on_change = on_change
+
     def add_apartment(self, building: str, floor: int, apartment_number: str, total_keys: int) -> Apartment:
         if total_keys <= 0:
             raise KeyManagerError("Общее количество ключей должно быть больше 0.")
