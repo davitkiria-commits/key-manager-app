@@ -588,7 +588,7 @@ class SettingsDialog(QDialog):
     def __init__(
         self,
         current_data_path: str,
-        on_save_path: Callable[[str], None],
+        on_save_path: Callable[[str], bool],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -630,8 +630,9 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "Ошибка", "Укажите путь к файлу data.json.")
             return
         try:
-            self._on_save_path(path)
-            self.accept()
+            changed = self._on_save_path(path)
+            if changed:
+                self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка сохранения настроек", str(e))
 
@@ -641,7 +642,7 @@ class MainWindow(QMainWindow):
         self,
         manager: KeyManager,
         data_file_path: str,
-        on_change_data_path: Callable[[str], None],
+        on_change_data_path: Callable[[str], bool],
     ) -> None:
         super().__init__()
         self.manager = manager
@@ -887,6 +888,12 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             self.refresh_table()
 
-    def _apply_data_path(self, path: str) -> None:
-        self.on_change_data_path(path)
-        self.data_file_path = path
+    def _apply_data_path(self, path: str) -> bool:
+        changed = self.on_change_data_path(path)
+        if changed:
+            self.data_file_path = path
+        return changed
+
+    def on_data_source_changed(self, data_file_path: str) -> None:
+        self.data_file_path = data_file_path
+        self.refresh_table()
