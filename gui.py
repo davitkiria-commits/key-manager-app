@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from key_manager import KeyManager, KeyManagerError
+from key_manager import KeyManager, KeyManagerError, Person
 
 
 class AddApartmentDialog(QDialog):
@@ -65,6 +65,138 @@ class AddApartmentDialog(QDialog):
             QMessageBox.warning(self, "Ошибка", str(e))
 
 
+class PersonEditDialog(QDialog):
+    def __init__(self, manager: KeyManager, person: Person | None = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.manager = manager
+        self.person = person
+
+        self.setWindowTitle("Редактировать получателя" if person else "Добавить получателя")
+
+        self.name_edit = QLineEdit(person.full_name if person else "")
+        self.role_edit = QLineEdit(person.role if person else "")
+
+        form = QFormLayout()
+        form.addRow("ФИО:", self.name_edit)
+        form.addRow("Роль:", self.role_edit)
+
+        save_btn = QPushButton("Сохранить")
+        save_btn.clicked.connect(self._save)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(save_btn)
+
+    def _save(self) -> None:
+        try:
+            if self.person:
+                self.manager.edit_person(
+                    person_id=self.person.person_id,
+                    full_name=self.name_edit.text(),
+                    role=self.role_edit.text(),
+                )
+            else:
+                self.manager.add_person(
+                    full_name=self.name_edit.text(),
+                    role=self.role_edit.text(),
+                    is_active=True,
+                )
+            self.accept()
+        except KeyManagerError as e:
+            QMessageBox.warning(self, "Ошибка", str(e))
+
+
+class PersonsDialog(QDialog):
+    def __init__(self, manager: KeyManager, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.manager = manager
+        self.setWindowTitle("Получатели")
+        self.resize(760, 500)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Поиск по имени...")
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["ID", "ФИО", "Роль", "Активен"])
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+
+        btn_add = QPushButton("Добавить")
+        btn_edit = QPushButton("Редактировать")
+        btn_toggle = QPushButton("Отключить/Активировать")
+
+        btn_add.clicked.connect(self._on_add)
+        btn_edit.clicked.connect(self._on_edit)
+        btn_toggle.clicked.connect(self._on_toggle)
+        self.search_edit.textChanged.connect(self._fill)
+
+        controls = QHBoxLayout()
+        controls.addWidget(btn_add)
+        controls.addWidget(btn_edit)
+        controls.addWidget(btn_toggle)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.search_edit)
+        layout.addWidget(self.table)
+        layout.addLayout(controls)
+
+        self._fill()
+
+    def _fill(self) -> None:
+        query = self.search_edit.text().strip().lower()
+        persons = self.manager.get_persons(include_inactive=True)
+        if query:
+            persons = [p for p in persons if query in p.full_name.lower()]
+
+        self.table.setRowCount(len(persons))
+        for row, person in enumerate(persons):
+            self.table.setItem(row, 0, QTableWidgetItem(str(person.person_id)))
+            self.table.setItem(row, 1, QTableWidgetItem(person.full_name))
+            self.table.setItem(row, 2, QTableWidgetItem(person.role))
+            self.table.setItem(row, 3, QTableWidgetItem("Да" if person.is_active else "Нет"))
+
+        self.table.resizeColumnsToContents()
+
+    def _selected_person_id(self) -> int | None:
+        row = self.table.currentRow()
+        if row < 0:
+            return None
+        item = self.table.item(row, 0)
+        if not item:
+            return None
+        return int(item.text())
+
+    def _on_add(self) -> None:
+        dialog = PersonEditDialog(self.manager, parent=self)
+        if dialog.exec():
+            self._fill()
+
+    def _on_edit(self) -> None:
+        person_id = self._selected_person_id()
+        if person_id is None:
+            QMessageBox.information(self, "Внимание", "Выберите человека в таблице.")
+            return
+
+        person = self.manager.get_person(person_id)
+        if not person:
+            return
+        dialog = PersonEditDialog(self.manager, person=person, parent=self)
+        if dialog.exec():
+            self._fill()
+
+    def _on_toggle(self) -> None:
+        person_id = self._selected_person_id()
+        if person_id is None:
+            QMessageBox.information(self, "Внимание", "Выберите человека в таблице.")
+            return
+
+        person = self.manager.get_person(person_id)
+        if not person:
+            return
+
+        self.manager.set_person_active(person_id, not person.is_active)
+        self._fill()
+
+
 class IssueDialog(QDialog):
     def __init__(self, manager: KeyManager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -80,19 +212,21 @@ class IssueDialog(QDialog):
         self.count_spin.setRange(1, 1000)
 
         self.limit_label = QLabel("Доступно: -")
+        self.person_hint_label = QLabel("")
 
         form = QFormLayout()
         form.addRow("Квартира:", self.apartment_combo)
         form.addRow("Получатель:", self.recipient_combo)
+        form.addRow("", self.person_hint_label)
         form.addRow("Количество:", self.count_spin)
         form.addRow("Лимит:", self.limit_label)
 
-        issue_btn = QPushButton("Выдать")
-        issue_btn.clicked.connect(self._issue)
+        self.issue_btn = QPushButton("Выдать")
+        self.issue_btn.clicked.connect(self._issue)
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(issue_btn)
+        layout.addWidget(self.issue_btn)
 
         self.apartment_combo.currentIndexChanged.connect(self._update_limit)
         self._reload_data()
@@ -106,12 +240,23 @@ class IssueDialog(QDialog):
             )
 
         self.recipient_combo.clear()
-        self.recipient_combo.addItems(self.manager.get_recipients())
+        active_persons = self.manager.get_persons(include_inactive=False)
+        for person in active_persons:
+            self.recipient_combo.addItem(f"{person.full_name} ({person.role})" if person.role else person.full_name, person.person_id)
 
         completer = self.recipient_combo.completer()
         if completer:
             completer.setFilterMode(Qt.MatchContains)
             completer.setCaseSensitivity(Qt.CaseInsensitive)
+
+        if not active_persons:
+            self.person_hint_label.setText("Нет активных получателей. Добавьте людей в окне 'Получатели'.")
+            self.recipient_combo.setEnabled(False)
+            self.issue_btn.setEnabled(False)
+        else:
+            self.person_hint_label.setText("Показываются только активные получатели.")
+            self.recipient_combo.setEnabled(True)
+            self.issue_btn.setEnabled(True)
 
         self._update_limit()
 
@@ -129,9 +274,13 @@ class IssueDialog(QDialog):
             apartment_id = self.apartment_combo.currentData()
             if apartment_id is None:
                 raise KeyManagerError("Нет доступных квартир для выдачи.")
-            recipient = self.recipient_combo.currentText().strip()
+
+            person_id = self.recipient_combo.currentData()
+            if person_id is None:
+                raise KeyManagerError("Выберите получателя из списка.")
+
             count = self.count_spin.value()
-            self.manager.issue_keys(apartment_id=apartment_id, recipient=recipient, count=count)
+            self.manager.issue_keys(apartment_id=apartment_id, recipient_id=person_id, count=count)
             self.accept()
         except KeyManagerError as e:
             QMessageBox.warning(self, "Ошибка выдачи", str(e))
@@ -169,7 +318,7 @@ class ReturnDialog(QDialog):
             apartment = self.manager.get_apartment(issue.apartment_id)
             if apartment:
                 text = (
-                    f"#{issue.issue_id} | {issue.recipient} | "
+                    f"#{issue.issue_id} | {issue.recipient_name} | "
                     f"кв. {apartment.apartment_number} | осталось: {issue.active_count}"
                 )
                 self.issue_combo.addItem(text, issue.issue_id)
@@ -258,10 +407,7 @@ class HistoryDialog(QDialog):
         super().__init__(parent)
         self.manager = manager
         self.setWindowTitle("История операций")
-        self.resize(900, 550)
-
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Поиск по получателю...")
+        self.resize(1100, 600)
 
         self.date_from_edit = QDateEdit()
         self.date_from_edit.setCalendarPopup(True)
@@ -277,62 +423,73 @@ class HistoryDialog(QDialog):
         self.date_to_edit.setMinimumDate(QDate(1900, 1, 1))
         self.date_to_edit.setDate(self.date_to_edit.minimumDate())
 
-        self.employee_edit = QLineEdit()
-        self.employee_edit.setPlaceholderText("Сотрудник / получатель")
+        self.person_combo = QComboBox()
+        self.person_combo.setEditable(True)
+        self.person_combo.addItem("", "")
+        for person in self.manager.get_persons(include_inactive=True):
+            self.person_combo.addItem(person.full_name, person.full_name)
+        completer = self.person_combo.completer()
+        if completer:
+            completer.setFilterMode(Qt.MatchContains)
+            completer.setCaseSensitivity(Qt.CaseInsensitive)
+
+        self.apartment_edit = QLineEdit()
+        self.apartment_edit.setPlaceholderText("Номер квартиры")
 
         self.reset_btn = QPushButton("Сбросить фильтры")
         self.reset_btn.clicked.connect(self._reset_filters)
 
         filters = QHBoxLayout()
-        filters.addWidget(QLabel("Поиск получателя:"))
-        filters.addWidget(self.search_edit)
         filters.addWidget(QLabel("Дата с:"))
         filters.addWidget(self.date_from_edit)
         filters.addWidget(QLabel("Дата по:"))
         filters.addWidget(self.date_to_edit)
-        filters.addWidget(QLabel("Сотрудник:"))
-        filters.addWidget(self.employee_edit)
+        filters.addWidget(QLabel("Человек:"))
+        filters.addWidget(self.person_combo)
+        filters.addWidget(QLabel("Квартира:"))
+        filters.addWidget(self.apartment_edit)
         filters.addWidget(self.reset_btn)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Время", "Тип", "Квартира", "Детали"])
+        self.table = QTableWidget(0, 8)
+        self.table.setHorizontalHeaderLabels(
+            ["Дата и время", "Действие", "Корпус", "Этаж", "Квартира", "Получатель", "Количество", "Статус"]
+        )
         self.table.setSortingEnabled(True)
 
         layout = QVBoxLayout(self)
         layout.addLayout(filters)
         layout.addWidget(self.table)
 
-        self.search_edit.textChanged.connect(self._fill)
-        self.employee_edit.textChanged.connect(self._fill)
+        self.person_combo.currentIndexChanged.connect(self._fill)
+        self.person_combo.lineEdit().textChanged.connect(self._fill)
+        self.apartment_edit.textChanged.connect(self._fill)
         self.date_from_edit.dateChanged.connect(self._fill)
         self.date_to_edit.dateChanged.connect(self._fill)
 
         self._fill()
 
     def _reset_filters(self) -> None:
-        self.search_edit.clear()
-        self.employee_edit.clear()
+        self.person_combo.setCurrentIndex(0)
+        self.person_combo.lineEdit().clear()
+        self.apartment_edit.clear()
         self.date_from_edit.setDate(self.date_from_edit.minimumDate())
         self.date_to_edit.setDate(self.date_to_edit.minimumDate())
         self._fill()
 
     def _fill(self) -> None:
-        search_text = self.search_edit.text().strip().lower()
-        employee_text = self.employee_edit.text().strip().lower()
+        person_text = self.person_combo.currentText().strip().lower()
+        apt_text = self.apartment_edit.text().strip().lower()
 
         date_from = self.date_from_edit.date()
         date_to = self.date_to_edit.date()
         has_date_from = date_from != self.date_from_edit.minimumDate()
         has_date_to = date_to != self.date_to_edit.minimumDate()
 
-        filtered = []
+        rows = []
         for item in self.manager.get_history():
-            recipient_text = item.recipient.lower() if item.recipient else ""
-            details_text = item.details.lower()
-
-            if search_text and search_text not in recipient_text and search_text not in details_text:
+            if person_text and person_text not in item.recipient.lower():
                 continue
-            if employee_text and employee_text not in recipient_text and employee_text not in details_text:
+            if apt_text and apt_text not in str(item.apartment_number).lower():
                 continue
 
             op_date = QDate(item.timestamp.year, item.timestamp.month, item.timestamp.day)
@@ -341,22 +498,64 @@ class HistoryDialog(QDialog):
             if has_date_to and op_date > date_to:
                 continue
 
-            filtered.append(item)
+            rows.append(item)
 
-        self.table.setRowCount(len(filtered))
+        self.table.setRowCount(len(rows))
+        for row, item in enumerate(rows):
+            values = [
+                item.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                item.operation_type,
+                item.building,
+                item.floor,
+                item.apartment_number,
+                item.recipient,
+                str(item.quantity),
+                item.status,
+            ]
+            for col, value in enumerate(values):
+                self.table.setItem(row, col, QTableWidgetItem(value))
 
-        for row, item in enumerate(filtered):
-            apartment = self.manager.get_apartment(item.apartment_id)
-            apt_text = "-"
-            if apartment:
-                apt_text = f"{apartment.building}/{apartment.floor}/{apartment.apartment_number}"
-
-            self.table.setItem(row, 0, QTableWidgetItem(item.timestamp.strftime("%Y-%m-%d %H:%M:%S")))
-            self.table.setItem(row, 1, QTableWidgetItem(item.operation_type))
-            self.table.setItem(row, 2, QTableWidgetItem(apt_text))
-            self.table.setItem(row, 3, QTableWidgetItem(item.details))
-
+        self.table.resizeColumnsToContents()
         self.table.sortItems(0, Qt.DescendingOrder)
+
+
+class KeysOnHandDialog(QDialog):
+    def __init__(self, manager: KeyManager, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.manager = manager
+        self.setWindowTitle("Ключи на руках")
+        self.resize(900, 500)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Корпус", "Этаж", "Квартира", "Кто держит", "Количество", "Дата выдачи"])
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.table)
+
+        self._fill()
+
+    def _fill(self) -> None:
+        issues = self.manager.get_active_issues()
+        self.table.setRowCount(len(issues))
+
+        for row, issue in enumerate(issues):
+            apartment = self.manager.get_apartment(issue.apartment_id)
+            if apartment:
+                values = [
+                    apartment.building,
+                    str(apartment.floor),
+                    apartment.apartment_number,
+                    issue.recipient_name,
+                    str(issue.active_count),
+                    issue.issued_at.strftime("%Y-%m-%d %H:%M:%S"),
+                ]
+            else:
+                values = ["-", "-", "-", issue.recipient_name, str(issue.active_count), issue.issued_at.strftime("%Y-%m-%d %H:%M:%S")]
+
+            for col, value in enumerate(values):
+                self.table.setItem(row, col, QTableWidgetItem(value))
+
+        self.table.resizeColumnsToContents()
 
 
 class MainWindow(QMainWindow):
@@ -364,7 +563,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.manager = manager
         self.setWindowTitle("Учет ключей")
-        self.resize(1000, 600)
+        self.resize(1100, 650)
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -383,16 +582,20 @@ class MainWindow(QMainWindow):
         btn_return = QPushButton("Вернуть ключи")
         btn_lost = QPushButton("Отметить утерю")
         btn_history = QPushButton("История")
+        btn_persons = QPushButton("Получатели")
+        btn_keys_on_hand = QPushButton("Ключи на руках")
 
         btn_add.clicked.connect(self._on_add)
         btn_issue.clicked.connect(self._on_issue)
         btn_return.clicked.connect(self._on_return)
         btn_lost.clicked.connect(self._on_lost)
         btn_history.clicked.connect(self._on_history)
+        btn_persons.clicked.connect(self._on_persons)
+        btn_keys_on_hand.clicked.connect(self._on_keys_on_hand)
         self.search_edit.textChanged.connect(self.refresh_table)
 
         btns = QHBoxLayout()
-        for btn in (btn_add, btn_issue, btn_return, btn_lost, btn_history):
+        for btn in (btn_add, btn_issue, btn_return, btn_lost, btn_history, btn_persons, btn_keys_on_hand):
             btns.addWidget(btn)
 
         layout = QVBoxLayout(root)
@@ -455,4 +658,12 @@ class MainWindow(QMainWindow):
 
     def _on_history(self) -> None:
         dialog = HistoryDialog(self.manager, self)
+        dialog.exec()
+
+    def _on_persons(self) -> None:
+        dialog = PersonsDialog(self.manager, self)
+        dialog.exec()
+
+    def _on_keys_on_hand(self) -> None:
+        dialog = KeysOnHandDialog(self.manager, self)
         dialog.exec()

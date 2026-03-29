@@ -21,10 +21,19 @@ class Apartment:
 
 
 @dataclass
+class Person:
+    person_id: int
+    full_name: str
+    role: str
+    is_active: bool = True
+
+
+@dataclass
 class ActiveIssue:
     issue_id: int
     apartment_id: int
-    recipient: str
+    recipient_id: Optional[int]
+    recipient_name: str
     issued_count: int
     returned_count: int = 0
     issued_at: datetime = field(default_factory=datetime.now)
@@ -38,9 +47,14 @@ class ActiveIssue:
 class Operation:
     timestamp: datetime
     operation_type: str
-    apartment_id: int
+    apartment_id: Optional[int]
+    building: str
+    floor: str
+    apartment_number: str
+    recipient: str
+    quantity: int
+    status: str
     details: str
-    recipient: str = ""
 
 
 class KeyManagerError(Exception):
@@ -52,10 +66,11 @@ class KeyManager:
         self._apartments: Dict[int, Apartment] = {}
         self._active_issues: Dict[int, ActiveIssue] = {}
         self._history: List[Operation] = []
-        self._recipients: set[str] = set()
+        self._persons: Dict[int, Person] = {}
 
         self._next_apartment_id = 1
         self._next_issue_id = 1
+        self._next_person_id = 1
         self._on_change = on_change
 
     def add_apartment(self, building: str, floor: int, apartment_number: str, total_keys: int) -> Apartment:
@@ -72,11 +87,62 @@ class KeyManager:
         self._apartments[apartment.apartment_id] = apartment
         self._next_apartment_id += 1
 
-        self._add_history(apartment.apartment_id, "ADD_APARTMENT", f"Добавлена квартира, всего ключей: {total_keys}")
+        self._add_history(
+            operation_type="ADD_APARTMENT",
+            apartment=apartment,
+            recipient="",
+            quantity=total_keys,
+            status="Создана",
+            details=f"Добавлена квартира, всего ключей: {total_keys}",
+        )
         self._notify_change()
         return apartment
 
-    def issue_keys(self, apartment_id: int, recipient: str, count: int) -> ActiveIssue:
+    def add_person(self, full_name: str, role: str, is_active: bool = True) -> Person:
+        name = full_name.strip()
+        if not name:
+            raise KeyManagerError("Укажите ФИО.")
+
+        person = Person(
+            person_id=self._next_person_id,
+            full_name=name,
+            role=role.strip(),
+            is_active=is_active,
+        )
+        self._persons[person.person_id] = person
+        self._next_person_id += 1
+        self._notify_change()
+        return person
+
+    def edit_person(self, person_id: int, full_name: str, role: str) -> None:
+        person = self._persons.get(person_id)
+        if not person:
+            raise KeyManagerError("Получатель не найден.")
+        name = full_name.strip()
+        if not name:
+            raise KeyManagerError("Укажите ФИО.")
+
+        person.full_name = name
+        person.role = role.strip()
+        self._notify_change()
+
+    def set_person_active(self, person_id: int, is_active: bool) -> None:
+        person = self._persons.get(person_id)
+        if not person:
+            raise KeyManagerError("Получатель не найден.")
+        person.is_active = is_active
+        self._notify_change()
+
+    def get_person(self, person_id: int) -> Optional[Person]:
+        return self._persons.get(person_id)
+
+    def get_persons(self, include_inactive: bool = True) -> List[Person]:
+        persons = self._persons.values()
+        if not include_inactive:
+            persons = [p for p in persons if p.is_active]
+        return sorted(persons, key=lambda p: p.full_name.lower())
+
+    def issue_keys(self, apartment_id: int, recipient_id: int, count: int) -> ActiveIssue:
         apartment = self._get_apartment(apartment_id)
 
         if count <= 0:
@@ -86,23 +152,32 @@ class KeyManager:
                 f"Недостаточно доступных ключей. Доступно: {apartment.available_keys}, запрошено: {count}."
             )
 
-        recipient = recipient.strip()
-        if not recipient:
-            raise KeyManagerError("Укажите получателя.")
+        person = self._persons.get(recipient_id)
+        if not person:
+            raise KeyManagerError("Выберите получателя из справочника.")
+        if not person.is_active:
+            raise KeyManagerError("Нельзя выдавать ключи неактивному получателю.")
 
         apartment.issued_keys += count
-        self._recipients.add(recipient)
 
         issue = ActiveIssue(
             issue_id=self._next_issue_id,
             apartment_id=apartment_id,
-            recipient=recipient,
+            recipient_id=person.person_id,
+            recipient_name=person.full_name,
             issued_count=count,
         )
         self._active_issues[issue.issue_id] = issue
         self._next_issue_id += 1
 
-        self._add_history(apartment_id, "ISSUE", f"Выдано {count} ключ(ей) получателю: {recipient}", recipient=recipient)
+        self._add_history(
+            operation_type="ISSUE",
+            apartment=apartment,
+            recipient=person.full_name,
+            quantity=count,
+            status="Выдано",
+            details=f"Выдано {count} ключ(ей) получателю: {person.full_name}",
+        )
         self._notify_change()
         return issue
 
@@ -121,11 +196,14 @@ class KeyManager:
         issue.returned_count += count
         apartment.issued_keys -= count
 
+        status = "Закрыто" if issue.active_count - count == 0 else "Частично возвращено"
         self._add_history(
-            apartment.apartment_id,
-            "RETURN",
-            f"Возвращено {count} ключ(ей) от получателя: {issue.recipient}",
-            recipient=issue.recipient,
+            operation_type="RETURN",
+            apartment=apartment,
+            recipient=issue.recipient_name,
+            quantity=count,
+            status=status,
+            details=f"Возвращено {count} ключ(ей) от получателя: {issue.recipient_name}",
         )
 
         if issue.active_count == 0:
@@ -144,7 +222,14 @@ class KeyManager:
             )
 
         apartment.lost_keys += count
-        self._add_history(apartment_id, "LOST", f"Отмечена утеря {count} ключ(ей)")
+        self._add_history(
+            operation_type="LOST",
+            apartment=apartment,
+            recipient="",
+            quantity=count,
+            status="Утеря",
+            details=f"Отмечена утеря {count} ключ(ей)",
+        )
         self._notify_change()
 
     def get_apartments(self) -> List[Apartment]:
@@ -158,9 +243,6 @@ class KeyManager:
 
     def get_history(self) -> List[Operation]:
         return sorted(self._history, key=lambda h: h.timestamp, reverse=True)
-
-    def get_recipients(self) -> List[str]:
-        return sorted(self._recipients)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -176,11 +258,21 @@ class KeyManager:
                 }
                 for a in self._apartments.values()
             ],
+            "persons": [
+                {
+                    "person_id": p.person_id,
+                    "full_name": p.full_name,
+                    "role": p.role,
+                    "is_active": p.is_active,
+                }
+                for p in self._persons.values()
+            ],
             "active_issues": [
                 {
                     "issue_id": issue.issue_id,
                     "apartment_id": issue.apartment_id,
-                    "recipient": issue.recipient,
+                    "recipient_id": issue.recipient_id,
+                    "recipient_name": issue.recipient_name,
                     "issued_count": issue.issued_count,
                     "returned_count": issue.returned_count,
                     "issued_at": issue.issued_at.isoformat(),
@@ -192,21 +284,26 @@ class KeyManager:
                     "timestamp": op.timestamp.isoformat(),
                     "operation_type": op.operation_type,
                     "apartment_id": op.apartment_id,
-                    "details": op.details,
+                    "building": op.building,
+                    "floor": op.floor,
+                    "apartment_number": op.apartment_number,
                     "recipient": op.recipient,
+                    "quantity": op.quantity,
+                    "status": op.status,
+                    "details": op.details,
                 }
                 for op in self._history
             ],
-            "recipients": sorted(self._recipients),
             "next_apartment_id": self._next_apartment_id,
             "next_issue_id": self._next_issue_id,
+            "next_person_id": self._next_person_id,
         }
 
     def load_dict(self, data: Dict[str, Any]) -> None:
         self._apartments.clear()
         self._active_issues.clear()
         self._history.clear()
-        self._recipients.clear()
+        self._persons.clear()
 
         for item in data.get("apartments", []):
             apartment = Apartment(
@@ -220,11 +317,31 @@ class KeyManager:
             )
             self._apartments[apartment.apartment_id] = apartment
 
+        for item in data.get("persons", []):
+            person = Person(
+                person_id=int(item["person_id"]),
+                full_name=str(item.get("full_name", "")).strip(),
+                role=str(item.get("role", "")),
+                is_active=bool(item.get("is_active", True)),
+            )
+            if person.full_name:
+                self._persons[person.person_id] = person
+
         for item in data.get("active_issues", []):
+            recipient_name = str(item.get("recipient_name", "")).strip()
+            recipient_id_raw = item.get("recipient_id")
+            recipient_id = int(recipient_id_raw) if recipient_id_raw is not None else None
+
+            if not recipient_name and recipient_id is not None and recipient_id in self._persons:
+                recipient_name = self._persons[recipient_id].full_name
+            if not recipient_name:
+                recipient_name = str(item.get("recipient", "")).strip()
+
             issue = ActiveIssue(
                 issue_id=int(item["issue_id"]),
                 apartment_id=int(item["apartment_id"]),
-                recipient=str(item["recipient"]),
+                recipient_id=recipient_id,
+                recipient_name=recipient_name,
                 issued_count=int(item["issued_count"]),
                 returned_count=int(item.get("returned_count", 0)),
                 issued_at=datetime.fromisoformat(item["issued_at"]),
@@ -232,23 +349,40 @@ class KeyManager:
             self._active_issues[issue.issue_id] = issue
 
         for item in data.get("history", []):
+            apartment_id_value = item.get("apartment_id")
+            apartment_id = int(apartment_id_value) if apartment_id_value is not None else None
+            apartment = self._apartments.get(apartment_id) if apartment_id is not None else None
+
             self._history.append(
                 Operation(
                     timestamp=datetime.fromisoformat(item["timestamp"]),
                     operation_type=str(item["operation_type"]),
-                    apartment_id=int(item["apartment_id"]),
-                    details=str(item["details"]),
+                    apartment_id=apartment_id,
+                    building=str(item.get("building", apartment.building if apartment else "-")),
+                    floor=str(item.get("floor", apartment.floor if apartment else "-")),
+                    apartment_number=str(item.get("apartment_number", apartment.apartment_number if apartment else "-")),
                     recipient=str(item.get("recipient", "")),
+                    quantity=int(item.get("quantity", self._extract_quantity(str(item.get("details", ""))))),
+                    status=str(item.get("status", self._default_status(str(item.get("operation_type", ""))))),
+                    details=str(item.get("details", "")),
                 )
             )
 
-        self._recipients = {str(x) for x in data.get("recipients", []) if str(x).strip()}
+        # Миграция старого формата recipients -> persons
+        for name in data.get("recipients", []):
+            full_name = str(name).strip()
+            if full_name and all(p.full_name != full_name for p in self._persons.values()):
+                person = Person(person_id=self._next_person_id, full_name=full_name, role="", is_active=True)
+                self._persons[person.person_id] = person
+                self._next_person_id += 1
 
         computed_next_apartment_id = (max(self._apartments.keys()) + 1) if self._apartments else 1
         computed_next_issue_id = (max(self._active_issues.keys()) + 1) if self._active_issues else 1
+        computed_next_person_id = (max(self._persons.keys()) + 1) if self._persons else 1
 
         self._next_apartment_id = max(int(data.get("next_apartment_id", 1)), computed_next_apartment_id)
         self._next_issue_id = max(int(data.get("next_issue_id", 1)), computed_next_issue_id)
+        self._next_person_id = max(int(data.get("next_person_id", 1)), computed_next_person_id)
 
     def _get_apartment(self, apartment_id: int) -> Apartment:
         apartment = self._apartments.get(apartment_id)
@@ -256,17 +390,44 @@ class KeyManager:
             raise KeyManagerError("Квартира не найдена.")
         return apartment
 
-    def _add_history(self, apartment_id: int, operation_type: str, details: str, recipient: str = "") -> None:
+    def _add_history(
+        self,
+        operation_type: str,
+        apartment: Apartment,
+        recipient: str,
+        quantity: int,
+        status: str,
+        details: str,
+    ) -> None:
         self._history.append(
             Operation(
                 timestamp=datetime.now(),
                 operation_type=operation_type,
-                apartment_id=apartment_id,
-                details=details,
+                apartment_id=apartment.apartment_id,
+                building=apartment.building,
+                floor=str(apartment.floor),
+                apartment_number=apartment.apartment_number,
                 recipient=recipient,
+                quantity=quantity,
+                status=status,
+                details=details,
             )
         )
 
     def _notify_change(self) -> None:
         if self._on_change:
             self._on_change()
+
+    @staticmethod
+    def _extract_quantity(details: str) -> int:
+        digits = "".join(ch for ch in details if ch.isdigit())
+        return int(digits) if digits else 0
+
+    @staticmethod
+    def _default_status(operation_type: str) -> str:
+        return {
+            "ADD_APARTMENT": "Создана",
+            "ISSUE": "Выдано",
+            "RETURN": "Возврат",
+            "LOST": "Утеря",
+        }.get(operation_type, "-")
