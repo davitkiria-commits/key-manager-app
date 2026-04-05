@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from key_manager import KeyManager, KeyManagerError, Person
+from key_manager import Apartment, KeyManager, KeyManagerError, Person
 from translations import tr
 
 
@@ -39,6 +39,10 @@ UPDATE_CONFIG = {
     "github_repo": "key-manager-app",
     "github_branch": "main",
 }
+
+
+def format_apartment_label(apartment: Apartment) -> str:
+    return f"{apartment.building}-{apartment.apartment_number}"
 
 
 def get_update_urls() -> dict[str, str]:
@@ -298,10 +302,7 @@ class IssueDialog(QDialog):
     def _reload_data(self) -> None:
         self.apartment_combo.clear()
         for a in self.manager.get_apartments():
-            self.apartment_combo.addItem(
-                tr("building_floor_apartment", building=a.building, floor=a.floor, apartment=a.apartment_number),
-                a.apartment_id,
-            )
+            self.apartment_combo.addItem(format_apartment_label(a), a.apartment_id)
 
         self.recipient_combo.clear()
         active_persons = self.manager.get_persons(include_inactive=False)
